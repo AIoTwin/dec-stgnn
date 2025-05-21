@@ -1,0 +1,15 @@
+{
+    "experiment_1":
+    {
+        "cloudlets": {
+            "cloudlet_1": {"id": 0, "lat": 37.395, "lon": -122.057, "color": "blue"},
+            "cloudlet_2": {"id": 1, "lat": 37.335, "lon": -122.040, "color": "gray"},
+            "cloudlet_3": {"id": 2, "lat": 37.400, "lon": -121.975, "color": "red"},
+            "cloudlet_4": {"id": 3, "lat": 37.390, "lon": -121.915, "color": "green"},
+            "cloudlet_5": {"id": 4, "lat": 37.345, "lon": -121.870, "color": "purple"},
+            "cloudlet_6": {"id": 5, "lat": 37.290, "lon": -121.890, "color": "cyan"},
+            "cloudlet_7": {"id": 6, "lat": 37.285, "lon": -121.977, "color": "orange"}
+        },
+        "radius_km": 8
+    }
+}

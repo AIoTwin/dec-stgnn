@@ -1,0 +1,26 @@
+{
+    "experiment_2":
+    {
+        "cloudlets": {
+            "cloudlet_1": {"id": 0, "lat": 34.150, "lon": -118.50, "color": "blue"},
+            "cloudlet_2": {"id": 1, "lat": 34.150, "lon": -118.40, "color": "red"},
+            "cloudlet_3": {"id": 2, "lat": 34.150, "lon": -118.30, "color": "green"},
+            "cloudlet_4": {"id": 3, "lat": 34.175, "lon": -118.25, "color": "purple"},
+            "cloudlet_5": {"id": 4, "lat": 34.100, "lon": -118.25, "color": "orange"}
+        },
+        "radius_km": 10
+    },
+    "experiment_1":
+    {
+        "cloudlets": {
+            "cloudlet_1": {"id": 0, "lat": 34.072, "lon": -118.3, "color": "blue"},
+            "cloudlet_2": {"id": 1, "lat": 34.155, "lon": -118.49, "color": "gray"},
+            "cloudlet_3": {"id": 2, "lat": 34.15, "lon": -118.415, "color": "red"},
+            "cloudlet_4": {"id": 3, "lat": 34.12, "lon": -118.35, "color": "green"},
+            "cloudlet_5": {"id": 4, "lat": 34.16, "lon": -118.23, "color": "purple"},
+            "cloudlet_6": {"id": 5, "lat": 34.15, "lon": -118.275, "color": "cyan"},
+            "cloudlet_7": {"id": 6, "lat": 34.05, "lon": -118.225, "color": "orange"}
+        },
+        "radius_km": 8
+    }
+}
