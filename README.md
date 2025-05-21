@@ -1,66 +1,107 @@
-# Spatio-Temporal Graph Convolutional Networks
-[![issues](https://img.shields.io/github/issues/hazdzz/STGCN)](https://github.com/hazdzz/STGCN/issues)
-[![forks](https://img.shields.io/github/forks/hazdzz/STGCN)](https://github.com/hazdzz/STGCN/network/members)
-[![stars](https://img.shields.io/github/stars/hazdzz/STGCN)](https://github.com/hazdzz/STGCN/stargazers)
-[![License](https://img.shields.io/github/license/hazdzz/STGCN)](./LICENSE)
+# Simulator for Decentralized Training of Spatio-Temporal Graph Neural Networks
+[![issues](https://img.shields.io/github/issues/AIoTwin/dec-stgnn)](https://github.com/AIoTwin/dec-stgnn/issues)
+[![forks](https://img.shields.io/github/forks/AIoTwin/dec-stgnn)](https://github.com/AIoTwin/dec-stgnn/network/members)
+[![stars](https://img.shields.io/github/stars/AIoTwin/dec-stgnn)](https://github.com/AIoTwin/dec-stgnn/stargazers)
+[![License](https://img.shields.io/github/license/AIoTwin/dec-stgnn)](./LICENSE)
 
 ## About
-The PyTorch implementation of STGCN was implemented for the paper titled *Spatio-Temporal Graph Convolutional Networks:
-A Deep Learning Framework for Traffic Forecasting*.
+This simulator enables experimentation with decentralized training approaches (centralized, federated, server-free, and gossip-based) for Spatio-Temporal Graph Neural Networks in traffic prediction tasks.
 
 ## Paper
-https://arxiv.org/abs/1709.04875
+https://arxiv.org/abs/2412.03188
 
 ## Citation
 ```
-@inproceedings{10.5555/3304222.3304273,
-author = {Yu, Bing and Yin, Haoteng and Zhu, Zhanxing},
-title = {Spatio-Temporal Graph Convolutional Networks: A Deep Learning Framework for Traffic Forecasting},
-year = {2018},
-isbn = {9780999241127},
-publisher = {AAAI Press},
-booktitle = {Proceedings of the 27th International Joint Conference on Artificial Intelligence},
-pages = {3634–3640},
-numpages = {7},
-series = {IJCAI'18}
+@article{kralj2024semi,
+  title={Semi-decentralized Training of Spatio-Temporal Graph Neural Networks for Traffic Prediction},
+  author={Kralj, Ivan and Giaretta, Lodovico and Ježić, Gordan and Žarko, Ivana Podnar and Girdzijauskas, Šarūnas},
+  journal={arXiv preprint arXiv:2412.03188},
+  year={2024}
 }
 ```
 
-## Related works
-1. TCN: [*An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling*](https://arxiv.org/abs/1803.01271)
-2. GLU and GTU: [*Language Modeling with Gated Convolutional Networks*](https://arxiv.org/abs/1612.08083)
-3. ChebNet: [*Convolutional Neural Networks on Graphs with Fast Localized Spectral Filtering*](https://arxiv.org/abs/1606.09375)
-4. GCN: [*Semi-Supervised Classification with Graph Convolutional Networks*](https://arxiv.org/abs/1609.02907)
-
 ## Related code
-1. TCN: https://github.com/locuslab/TCN
-2. ChebNet: https://github.com/mdeff/cnn_graph
-3. GCN: https://github.com/tkipf/pygcn
+1. STGCN: https://github.com/hazdzz/stgcn
 
 ## Dataset
 ### Source
 1. METR-LA: [DCRNN author's Google Drive](https://drive.google.com/file/d/1pAGRfzMx6K9WWsfDcD1NMbIif0T0saFC/view?usp=sharing)
 2. PEMS-BAY: [DCRNN author's Google Drive](https://drive.google.com/file/d/1wD-mHlqAb2mtHOe_68fZvDh1LpDegMMq/view?usp=sharing)
-3. PeMSD7(M): [STGCN author's GitHub repository](https://github.com/VeritasYin/STGCN_IJCAI-18/blob/master/data_loader/PeMS-M.zip)
 
-### Preprocessing
-Using the formula from [ChebNet](https://arxiv.org/abs/1606.09375)：
-<img src="./figure/weighted_adjacency_matrix.png" style="zoom:100%" />
+## Prerequisites
+1. Install micromamba
+```
+https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html
+```
+2. Create micromamba environment
+```
+micromamba create -n "ENVIRONMENT_NAME" --file environment.yml --channel-priority flexible
+```
+3. Install PyTorch Geometric
+```
+pip install torch_geometric
+```
+4. Install Ray
+```
+pip install -U "ray[default]"
+```
 
-## Model structure
-<img src="./figure/stgcn_model_structure.png" style="zoom:100%" />
+## Configuration
 
-## Differents of code between mine and author's
-1. Fix bugs 
-2. Add Early Stopping approach
-3. Add Dropout approach
-4. Offer a different set of hyperparameters
-5. Offer config files for two different categories graph convolution (ChebyGraphConv and GraphConv)
-6. Add datasets METR-LA and PEMS-BAY
-7. Adopt a different data preprocessing method
+### Hyperparameters
+To change hyperparameters configuration, you'll need to go into the main .py file of a scenario you want to simulate and change hyperparameters there. Each scenario can have different hyperparameters that can be changed. Here's a sample:
+```
+"enable_cuda": True
+"seed": 42
+"dataset": "pems-bay"
+"n_his": 12
+"n_pred": 3
+"Kt": 3
+"stblock_num": 2
+"Ks": 3
+"graph_conv_type": "cheb_graph_conv"
+"enable_bias: True
+"droprate": 0.5
+"lr": 0.0001
+"weight_decay_rate": 0.00001
+"batch_size": 32
+"epochs": 40
+"step_size": 5
+"gamma": 0.7
+"cloudlet_num": 7
+"cloudlet_location_data": "experiment_1"
+```
 
-## Requirements
-To install requirements:
-```console
-pip3 install -r requirements.txt
+### Cloudlet location data
+In order to run experiments while using geographical sensor locations, you'll need to define cloudlet locations as well. The format is in .json, and you need to store them in ```"/locations/DATASET_NAME/locations.json"``` file.
+Example:
+```
+{
+    "experiment_1":
+    {
+        "cloudlets": {
+            "cloudlet_1": {"id": 0, "lat": 37.395, "lon": -122.057, "color": "blue"},
+            "cloudlet_2": {"id": 1, "lat": 37.335, "lon": -122.040, "color": "gray"},
+            "cloudlet_3": {"id": 2, "lat": 37.400, "lon": -121.975, "color": "red"},
+            "cloudlet_4": {"id": 3, "lat": 37.390, "lon": -121.915, "color": "green"},
+            "cloudlet_5": {"id": 4, "lat": 37.345, "lon": -121.870, "color": "purple"},
+            "cloudlet_6": {"id": 5, "lat": 37.290, "lon": -121.890, "color": "cyan"},
+            "cloudlet_7": {"id": 6, "lat": 37.285, "lon": -121.977, "color": "orange"}
+        },
+        "radius_km": 8
+    }
+}
+```
+
+## Usage
+Make sure you're in your create micromamba environment
+```
+micromamba activate "ENVIRONMENT_NAME"
+```
+
+Run any .py file that has main function in order to run a simulation for that specific scenario.
+
+Example:
+```
+python 2d-matrix-ray-actors-semi-dec-fl-architecture-distance.py
 ```
