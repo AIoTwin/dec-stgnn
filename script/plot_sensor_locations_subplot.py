@@ -12,6 +12,10 @@ datasets = [
     {"name": "metr-la", "title": "METR-LA"},
     {"name": "pems-bay", "title": "PeMS-BAY"}
 ]
+datasets = [
+    {"name": "pems-bay", "title": "PeMS-BAY"},
+    {"name": "pemsd7-m", "title": "PeMSD-7M"}
+]
 
 experiment = "experiment_1"
 plot_location = os.path.join(base_dir, f"logs/plots", f"locations_metr-la_pems-bay_{experiment}_subplot.png")

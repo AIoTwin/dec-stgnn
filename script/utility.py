@@ -9,6 +9,7 @@ from geopy.distance import geodesic
 import pandas as pd
 import json
 import random
+from scipy.signal import find_peaks
 
 def is_within_radius(lat1, lon1, lat2, lon2, radius_km):
     return geodesic((lat1, lon1), (lat2, lon2)).km <= radius_km
@@ -64,7 +65,8 @@ def zscore_preprocess_2d_data(zscore, train, val, test, use_fit_transform = Fals
     else:
         train_shaped = zscore.transform(train_shaped) 
     val_shaped = zscore.transform(val_shaped)
-    test_shaped = zscore.transform(test_shaped)
+    if test_shaped.shape[0] > 0:
+        test_shaped = zscore.transform(test_shaped)
 
     # Reshape train, val and test from 2D (time_sequence * num_nodes, 1) back to 2D (time_sequence, num_nodes)
     train = train_shaped.reshape(num_time_sequence_train, num_nodes_train)
@@ -209,6 +211,120 @@ def save_val_metric_logs(logs_folder, cloudlet_id, epoch, mae, rmse, wmape):
             'MAE': mae,
             'RMSE': rmse,
             'WMAPE': wmape
+        })
+
+def save_val_new_metric_logs(
+        logs_folder,
+        cloudlet_id,
+        epoch,
+        big_error_count,
+        big_error_rate,
+        sudden_event_count,
+        sudden_event_hits,
+        SUDDEN_EVENT_RATE,
+        jam_event_count,
+        jam_event_hits,
+        JAM_EVENT_RATE,
+        rec_event_count,
+        rec_event_hits,
+        REC_EVENT_RATE
+    ):
+    # Define the CSV file path
+    run_folder = os.path.join(logs_folder, 'new_val_metric')
+    csv_file_path = os.path.join(run_folder, f'{cloudlet_id}.csv')
+
+    # Create the directory path for logs if it doesn't exist
+    os.makedirs(run_folder, exist_ok=True)
+
+    # Write the headers if the CSV file doesn't exist
+    write_headers = not os.path.exists(csv_file_path)
+
+    with open(csv_file_path, 'a', newline='') as csvfile:
+        fieldnames = [
+            'Epoch',
+            'Big Error Count',
+            'Big Error Rate',
+            'Total sudden change in speed count',
+            'Total correct preidction sudden change in speed count',
+            'Total sudden change in speed rate',
+            'Traffic jam count',
+            'Correct traffic jam prediction count',
+            'Traffic jam rate',
+            'Traffic jam recovery count',
+            'Correct traffic jam recovery prediction count',
+            'Traffic jam recovery rate']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        if write_headers:
+            writer.writeheader()
+
+        writer.writerow({
+            'Epoch': epoch,
+            'Big Error Count': big_error_count,
+            'Big Error Rate': big_error_rate,
+            'Total sudden change in speed count': sudden_event_count,
+            'Total correct preidction sudden change in speed count': sudden_event_hits,
+            'Total sudden change in speed rate': SUDDEN_EVENT_RATE,
+            'Traffic jam count': jam_event_count,
+            'Correct traffic jam prediction count': jam_event_hits,
+            'Traffic jam rate': JAM_EVENT_RATE,
+            'Traffic jam recovery count': rec_event_count,
+            'Correct traffic jam recovery prediction count': rec_event_hits,
+            'Traffic jam recovery rate': REC_EVENT_RATE
+        })
+
+def save_val_alpha_propagation_metric_logs(
+        logs_folder,
+        cloudlet_id,
+        epoch,
+        precision,
+        recall,
+        f1,
+        iou,
+        accuracy,
+        gt_cong_rate,
+        total_points,
+        total_gt_cong,
+        total_pred_cong
+    ):
+    # Define the CSV file path
+    run_folder = os.path.join(logs_folder, 'alpha_propagation_metric')
+    csv_file_path = os.path.join(run_folder, f'{cloudlet_id}.csv')
+
+    # Create the directory path for logs if it doesn't exist
+    os.makedirs(run_folder, exist_ok=True)
+
+    # Write the headers if the CSV file doesn't exist
+    write_headers = not os.path.exists(csv_file_path)
+
+    with open(csv_file_path, 'a', newline='') as csvfile:
+        fieldnames = [
+            'Epoch',
+            'recall',
+            'precision',
+            'f1',
+            'iou',
+            'accuracy',
+            'gt_cong_rate',
+            'total_points',
+            'total_gt_cong',
+            'total_pred_cong']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        if write_headers:
+            writer.writeheader()
+
+        writer.writerow({
+            'Epoch': epoch,
+            'recall': recall,
+            'precision': precision,
+            'f1': f1,
+            'iou': iou,
+            'accuracy': accuracy,
+            'gt_cong_rate': gt_cong_rate,
+            'total_points': total_points,
+            'total_gt_cong': total_gt_cong,
+            'total_pred_cong': total_pred_cong
         })
 
 def save_val_metric_logs_edge_score(logs_folder, cloudletId, percentage, mae, rmse, wmape):
@@ -405,6 +521,62 @@ def save_edge_counts_logs(logs_folder, file_name, edge_counts, edge_positions):
     with open(csv_file_path, 'a', newline='') as f:
         f.write(header + "\n")
         f.write(data + "\n")
+
+def save_node_scores_logs(logs_folder, file_name, node_scores, node_positions):
+    # Define the CSV file path
+    run_folder = os.path.join(logs_folder, 'node_scores')
+    csv_file_path = os.path.join(run_folder, f'{file_name}.csv')
+
+    # Create the directory path for logs if it doesn't exist
+    os.makedirs(run_folder, exist_ok=True)
+
+    node_scores_np = node_scores.cpu().numpy()
+    node_positions_np = node_positions.reshape(1, -1)  # Reshape to match scores
+
+    header = ",".join([str(pos) for pos in node_positions_np[0]])
+    data = ",".join([f"{score:.4f}" for score in node_scores_np])
+
+    with open(csv_file_path, 'a', newline='') as f:
+        f.write(header + "\n")
+        f.write(data + "\n")
+
+def save_node_counts_logs(logs_folder, file_name, node_counts, node_positions):
+    run_folder = os.path.join(logs_folder, 'node_counts')
+    csv_file_path = os.path.join(run_folder, f'{file_name}.csv')
+
+    os.makedirs(run_folder, exist_ok=True)
+
+    node_counts_np = node_counts.cpu().numpy()
+    node_positions_np = node_positions.reshape(1, -1)
+
+    header = ",".join([str(pos) for pos in node_positions_np[0]])
+    data = ",".join([str(count) for count in node_counts_np])
+
+    with open(csv_file_path, 'a', newline='') as f:
+        f.write(header + "\n")
+        f.write(data + "\n")
+
+def save_ineligible_nodes_logs(logs_folder, cln_id, ineligible_nodes):
+    save_dir = os.path.join(logs_folder, 'other', f'cloudlet_{cln_id}')
+    os.makedirs(save_dir, exist_ok=True)
+    file_path = os.path.join(save_dir, 'ineligible_nodes.csv')
+
+    with open(file_path, 'a') as f:
+        if ineligible_nodes:
+            f.write(','.join(map(str, sorted(ineligible_nodes))) + '\n')
+        else:
+            f.write('\n')
+
+def save_nodes_removed_by_distribution_logs(logs_folder, cln_id, removed_nodes_by_distribution):
+    save_dir = os.path.join(logs_folder, 'other', f'cloudlet_{cln_id}')
+    os.makedirs(save_dir, exist_ok=True)
+    file_path = os.path.join(save_dir, 'removed_nodes_by_distribution.csv')
+
+    with open(file_path, 'a') as f:
+        if removed_nodes_by_distribution:
+            f.write(','.join(map(str, sorted(removed_nodes_by_distribution))) + '\n')
+        else:
+            f.write('\n')
 
 def calc_edge_index(adj):
     # Extract the non-zero elements (edges) from the adjacency matrix
@@ -722,6 +894,8 @@ def evaluate_pyg_metric_master(model, data_iter, scaler, edge_index):
         mae, sum_y, mape, mse = [], [], [], []
         for x, y in data_iter:
             y = scaler.inverse_transform(y.cpu().numpy()).reshape(-1)
+            x = x.to('cuda:0')
+            edge_index = edge_index.to('cuda:0')
             y_pred = scaler.inverse_transform(model(x, edge_index).view(len(x), -1).cpu().numpy()).reshape(-1)
             d = np.abs(y - y_pred)
             mae += d.tolist()
@@ -735,6 +909,177 @@ def evaluate_pyg_metric_master(model, data_iter, scaler, edge_index):
 
         #return MAE, MAPE, RMSE
         return MAE, RMSE, WMAPE
+
+def evaluate_cloudlet_pyg_new_metric_analysis(
+        model,
+        data_iter,
+        scaler,
+        edge_index,
+        cln_node_map,
+        big_err_threshold=20.0,   # large-error threshold (abs diff)
+        change_window=12,         # how many recent points to consider for sudden change
+        change_delta=20.0,        # minimum change to qualify as jam/recovery
+        change_tolerance=10.0,    # correctness band at the event endpoint
+        cooldown=None,            # steps to skip after detecting an event (default: change_window//2)
+    ):
+    """
+    Computes:
+      - MAE, RMSE, WMAPE
+      - BIG_ERR_COUNT, BIG_ERR_RATE
+      - SUDDEN_EVENT_COUNT, SUDDEN_EVENT_HITS, SUDDEN_EVENT_RATE
+      - JAM_EVENT_COUNT, JAM_EVENT_HITS, JAM_EVENT_RATE
+      - REC_EVENT_COUNT, REC_EVENT_HITS, REC_EVENT_RATE
+
+    Sudden-change event at time t (per node) if within the last `change_window` steps there
+    exists k < t such that:
+        Jam: GT[t] <= GT[k] - change_delta
+        Rec: GT[t] >= GT[k] + change_delta
+    Correct if |PRED[t] - GT[t]| <= change_tolerance.
+    """
+    if cooldown is None:
+        cooldown = max(1, change_window // 2)
+
+    model.eval()
+    with torch.no_grad():
+        mae, sum_y, mse = [], [], []
+        big_err_count = 0
+        total_preds = 0
+
+        # Sudden-change aggregates
+        sudden_event_count = 0
+        sudden_event_hits = 0
+
+        jam_event_count = 0
+        jam_event_hits = 0
+
+        rec_event_count = 0
+        rec_event_hits = 0
+
+        for x, y in data_iter:
+            x = x.to('cuda:0')
+            edge_index = edge_index.to('cuda:0')
+            y_pred = model(x, edge_index)
+            y = y[...,cln_node_map]
+            y_pred = y_pred[...,cln_node_map]
+
+            # inverse-scale ground truth and preds to mile/h
+            y_np = scaler.inverse_transform(y.cpu().numpy())
+
+            x = x.to('cuda:0')
+            edge_index = edge_index.to('cuda:0')  # avoid shadowing arg name
+            y_pred_np = scaler.inverse_transform(
+                y_pred.view(len(x), -1).cpu().numpy()
+            )
+
+            d = np.abs(y_np - y_pred_np)
+
+            # accumulate base metrics
+            mae.extend(d.ravel().tolist())
+            sum_y.extend(y_np.ravel().tolist())
+            mse.extend((d ** 2).ravel().tolist())
+
+            # accumulate large-error stats
+            big_err_count += int(np.sum(d >= big_err_threshold))
+            total_preds += d.size
+
+            # --- sudden-change events
+            # y_np and y_pred_np are [T_batch, N_num_nodes]
+            T, N = y_np.shape
+            # Per-node cooldown counters
+            cool = np.zeros(N, dtype=int)
+
+            for t in range(1, T):
+                # decrease cooldowns
+                cool = np.maximum(0, cool - 1)
+
+                # define window start
+                w_start = max(0, t - change_window)
+                # values in the lookback window (excluding t)
+                # shape: [W, N]
+                past = y_np[w_start:t, :]
+                # print(f"past: {past}")
+                if past.size == 0:
+                    continue
+
+                # current value at t for all nodes
+                cur = y_np[t, :]           # shape [N]
+                pred_cur = y_pred_np[t, :] # shape [N]
+                # print(f"cur: {cur}")
+                # print(f"pred_cur: {pred_cur}")
+
+                # For each node, find the reference k in the window that maximizes |cur - past_k|
+                # We do both directions separately to classify jam vs recovery.
+                # Jam detection: need a sufficiently higher past value that drops to cur.
+                #   jam_margin = past - cur  (positive means drop from past to cur)
+                jam_margin = past - cur[None, :]
+                # print(f"jam_margin: {jam_margin}")
+                # max over time axis -> best candidate drop in the window
+                jam_best = np.max(jam_margin, axis=0)  # shape [N]
+                # Recovery detection: rise from past to cur
+                rec_margin = cur[None, :] - past
+                # print(f"rec_margin: {rec_margin}")
+                rec_best = np.max(rec_margin, axis=0)  # shape [N]
+
+                # Boolean masks for events at time t
+                jam_mask = (jam_best >= change_delta) & (cool == 0)
+                rec_mask = (rec_best >= change_delta) & (cool == 0)
+
+                # print(f"jam_mask: {jam_mask}")
+                # print(f"rec_mask: {rec_mask}")
+
+                if not (jam_mask.any() or rec_mask.any()):
+                    continue
+
+                # Evaluate correctness at endpoint t:
+                # correct if |pred_cur - cur| <= change_tolerance
+                abs_err = np.abs(pred_cur - cur)
+                # print(f"abs_err: {abs_err}")
+
+                # Count jams
+                if jam_mask.any():
+                    idx = np.where(jam_mask)[0]
+                    hits = np.sum(abs_err[idx] <= change_tolerance)
+                    jam_event_count += idx.size
+                    jam_event_hits  += int(hits)
+                    # apply cooldown for those nodes
+                    cool[idx] = np.maximum(cool[idx], cooldown)
+
+                # Count recoveries
+                if rec_mask.any():
+                    idx = np.where(rec_mask)[0]
+                    hits = np.sum(abs_err[idx] <= change_tolerance)
+                    rec_event_count += idx.size
+                    rec_event_hits  += int(hits)
+                    # apply cooldown for those nodes
+                    cool[idx] = np.maximum(cool[idx], cooldown)
+
+            # accumulate totals
+            sudden_event_count += jam_event_count + rec_event_count - sudden_event_count
+            sudden_event_hits  += jam_event_hits + rec_event_hits   - sudden_event_hits
+
+        MAE = float(np.mean(mae)) if len(mae) > 0 else 0.0
+        RMSE = float(np.sqrt(np.mean(mse))) if len(mse) > 0 else 0.0
+        denom_sum_y = float(np.sum(sum_y))
+        WMAPE = float(np.sum(mae) / denom_sum_y) if denom_sum_y != 0 else 0.0
+        BIG_ERR_RATE = big_err_count / total_preds if total_preds > 0 else 0.0
+        # Rates
+        SUDDEN_EVENT_RATE = (
+            sudden_event_hits / sudden_event_count if sudden_event_count > 0 else 0.0
+        )
+        JAM_EVENT_RATE = (
+            jam_event_hits / jam_event_count if jam_event_count > 0 else 0.0
+        )
+        REC_EVENT_RATE = (
+            rec_event_hits / rec_event_count if rec_event_count > 0 else 0.0
+        )
+
+        return (
+            MAE, RMSE, WMAPE,
+            big_err_count, BIG_ERR_RATE,
+            sudden_event_count, sudden_event_hits, SUDDEN_EVENT_RATE,
+            jam_event_count, jam_event_hits, JAM_EVENT_RATE,
+            rec_event_count, rec_event_hits, REC_EVENT_RATE,
+        )
 
 def evaluate_pyg_metric_analysis(model, data_iter, scaler, edge_index):
     model.eval()
@@ -756,12 +1101,138 @@ def evaluate_pyg_metric_analysis(model, data_iter, scaler, edge_index):
         full_y_pred = np.concatenate(all_y_pred, axis=0)
         return full_d, full_y_pred
 
+def evaluate_cloudlet_pyg_new_metric_for_node_score(
+        model,
+        data_iter,
+        scaler,
+        edge_index,
+        cln_node_map,
+        change_window=12,         # how many recent points to consider for sudden change
+        change_delta=20.0,        # minimum change to qualify as jam/recovery
+        change_tolerance=10.0,    # correctness band at the event endpoint
+        cooldown=None,            # steps to skip after detecting an event (default: change_window//2)
+    ):
+    """
+    Computes:
+      - SUDDEN_EVENT_RATE
+
+    Sudden-change event at time t (per node) if within the last `change_window` steps there
+    exists k < t such that:
+        Jam: GT[t] <= GT[k] - change_delta
+        Rec: GT[t] >= GT[k] + change_delta
+    Correct if |PRED[t] - GT[t]| <= change_tolerance.
+    """
+    if cooldown is None:
+        cooldown = max(1, change_window // 2)
+
+    model.eval()
+    with torch.no_grad():
+        # Sudden-change aggregates
+        sudden_event_count = 0
+        sudden_event_hits = 0
+
+        jam_event_count = 0
+        jam_event_hits = 0
+
+        rec_event_count = 0
+        rec_event_hits = 0
+
+        for x, y in data_iter:
+            x = x.to('cuda:0')
+            edge_index = edge_index.to('cuda:0')
+            y_pred = model(x, edge_index)
+            y = y[...,cln_node_map]
+            y_pred = y_pred[...,cln_node_map]
+
+            # inverse-scale ground truth and preds to mile/h
+            y_np = scaler.inverse_transform(y.cpu().numpy())
+
+            x = x.to('cuda:0')
+            edge_index = edge_index.to('cuda:0')  # avoid shadowing arg name
+            y_pred_np = scaler.inverse_transform(
+                y_pred.view(len(x), -1).cpu().numpy()
+            )
+
+            # --- sudden-change events
+            # y_np and y_pred_np are [T_batch, N_num_nodes]
+            T, N = y_np.shape
+            # Per-node cooldown counters
+            cool = np.zeros(N, dtype=int)
+
+            for t in range(1, T):
+                # decrease cooldowns
+                cool = np.maximum(0, cool - 1)
+
+                # define window start
+                w_start = max(0, t - change_window)
+                # values in the lookback window (excluding t)
+                # shape: [W, N]
+                past = y_np[w_start:t, :]
+                if past.size == 0:
+                    continue
+
+                # current value at t for all nodes
+                cur = y_np[t, :]           # shape [N]
+                pred_cur = y_pred_np[t, :] # shape [N]
+                # For each node, find the reference k in the window that maximizes |cur - past_k|
+                # We do both directions separately to classify jam vs recovery.
+                # Jam detection: need a sufficiently higher past value that drops to cur.
+                #   jam_margin = past - cur  (positive means drop from past to cur)
+                jam_margin = past - cur[None, :]
+                # max over time axis -> best candidate drop in the window
+                jam_best = np.max(jam_margin, axis=0)  # shape [N]
+                # Recovery detection: rise from past to cur
+                rec_margin = cur[None, :] - past
+                rec_best = np.max(rec_margin, axis=0)  # shape [N]
+
+                # Boolean masks for events at time t
+                jam_mask = (jam_best >= change_delta) & (cool == 0)
+                rec_mask = (rec_best >= change_delta) & (cool == 0)
+
+                if not (jam_mask.any() or rec_mask.any()):
+                    continue
+
+                # Evaluate correctness at endpoint t:
+                # correct if |pred_cur - cur| <= change_tolerance
+                abs_err = np.abs(pred_cur - cur)
+
+                # Count jams
+                if jam_mask.any():
+                    idx = np.where(jam_mask)[0]
+                    hits = np.sum(abs_err[idx] <= change_tolerance)
+                    jam_event_count += idx.size
+                    jam_event_hits  += int(hits)
+                    # apply cooldown for those nodes
+                    cool[idx] = np.maximum(cool[idx], cooldown)
+
+                # Count recoveries
+                if rec_mask.any():
+                    idx = np.where(rec_mask)[0]
+                    hits = np.sum(abs_err[idx] <= change_tolerance)
+                    rec_event_count += idx.size
+                    rec_event_hits  += int(hits)
+                    # apply cooldown for those nodes
+                    cool[idx] = np.maximum(cool[idx], cooldown)
+
+            # accumulate totals
+            sudden_event_count += jam_event_count + rec_event_count - sudden_event_count
+            sudden_event_hits  += jam_event_hits + rec_event_hits   - sudden_event_hits
+
+        # Rates
+        SUDDEN_EVENT_RATE = (
+            sudden_event_hits / sudden_event_count if sudden_event_count > 0 else 0.0
+        )
+
+        return SUDDEN_EVENT_RATE
+
 def evaluate_cloudlet_pyg_metric_analysis(model, data_iter, scaler, edge_index, cln_node_map):
     model.eval()
     all_d = []
     all_y_pred = []
     with torch.no_grad():
         for x, y in data_iter:
+            x = x.to('cuda:0')
+            edge_index = edge_index.to('cuda:0')
             y_pred = model(x, edge_index)
             y = y[...,cln_node_map]
             y_pred = y_pred[...,cln_node_map]
@@ -1125,3 +1596,259 @@ def get_cloudlet_location_info_from_json(experiment_name, cloudlet_info_json):
         return cloudlets, radius_km
     else:
         raise ValueError(f"Experiment '{experiment_name}' not found in the json file.")
+
+def evaluate_cloudlet_pyg_new_metric_analysis_with_alpha_propagation(
+        model,
+        data_iter,
+        scaler,
+        edge_index,
+        cln_node_map,
+        big_err_threshold=20.0,   # large-error threshold (abs diff)
+        change_window=12,         # how many recent points to consider for sudden change
+        change_delta=20.0,        # minimum change to qualify as jam/recovery
+        change_tolerance=10.0,    # correctness band at the event endpoint
+        cooldown=None,            # steps to skip after detecting an event (default: change_window//2)
+        alpha=0.5,                # alpha for congestion rule
+    ):
+    """
+    Computes:
+      - MAE, RMSE, WMAPE
+      - BIG_ERR_COUNT, BIG_ERR_RATE
+      - SUDDEN_EVENT_COUNT, SUDDEN_EVENT_HITS, SUDDEN_EVENT_RATE
+      - JAM_EVENT_COUNT, JAM_EVENT_HITS, JAM_EVENT_RATE
+      - REC_EVENT_COUNT, REC_EVENT_HITS, REC_EVENT_RATE
+      - (NEW) α-based congestion metrics:
+          precision, recall (== CONGESTION_HIT_RATE), f1, iou, accuracy, GT congestion rate
+    """
+    if cooldown is None:
+        cooldown = max(1, change_window // 2)
+
+    # Pre-build graph neighbors for the *subset* cln_node_map
+    # If no edges survive the filter, nbrs becomes all-empty -> corridor fallback will be used inside the detector.
+    if isinstance(cln_node_map, torch.Tensor):
+        cln_list = cln_node_map.detach().cpu().numpy().tolist()
+    else:
+        cln_list = list(cln_node_map)
+    nbrs = None
+    try:
+        nbrs = _build_subgraph_neighbors(edge_index, cln_list, num_nodes_subset=len(cln_list))
+        # If literally everyone has <2 neighbors, it's effectively empty for our spatial rule
+        if all(len(n) < 2 for n in nbrs):
+            nbrs = None
+    except Exception:
+        nbrs = None
+
+    model.eval()
+    with torch.no_grad():
+        mae, sum_y, mse = [], [], []
+        big_err_count = 0
+        total_preds = 0
+
+        # Sudden-change aggregates
+        sudden_event_count = 0
+        sudden_event_hits = 0
+
+        jam_event_count = 0
+        jam_event_hits = 0
+
+        rec_event_count = 0
+        rec_event_hits = 0
+
+        # α-based congestion aggregates
+        TP = FP = TN = FN = 0
+        total_points = 0
+        total_gt_cong = 0
+        total_pred_cong = 0
+
+        vhat_running = None  # we compute medians per batch; keep last if you prefer stability
+
+        for x, y in data_iter:
+            x = x.to('cuda:0')
+            ei = edge_index.to('cuda:0') if isinstance(edge_index, torch.Tensor) else edge_index
+            y_pred = model(x, ei)
+
+            y      = y[..., cln_node_map]
+            y_pred = y_pred[..., cln_node_map]
+
+            # inverse-scale to mph (or your unit)
+            y_np = scaler.inverse_transform(y.cpu().numpy())
+            y_pred_np = scaler.inverse_transform(
+                y_pred.view(len(x), -1).cpu().numpy()
+            )
+
+            # ---- base errors
+            d = np.abs(y_np - y_pred_np)
+            mae.extend(d.ravel().tolist())
+            sum_y.extend(y_np.ravel().tolist())
+            mse.extend((d ** 2).ravel().tolist())
+            big_err_count += int(np.sum(d >= big_err_threshold))
+            total_preds   += d.size
+
+            # ---- SCSR events
+            T, N = y_np.shape
+            cool = np.zeros(N, dtype=int)
+            for t in range(1, T):
+                cool = np.maximum(0, cool - 1)
+                w_start = max(0, t - change_window)
+                past = y_np[w_start:t, :]
+                if past.size == 0:
+                    continue
+                cur = y_np[t, :]
+                pred_cur = y_pred_np[t, :]
+
+                jam_best = np.max(past - cur[None, :], axis=0)
+                rec_best = np.max(cur[None, :] - past, axis=0)
+
+                jam_mask = (jam_best >= change_delta) & (cool == 0)
+                rec_mask = (rec_best >= change_delta) & (cool == 0)
+                if not (jam_mask.any() or rec_mask.any()):
+                    continue
+
+                abs_err = np.abs(pred_cur - cur)
+
+                if jam_mask.any():
+                    idx = np.where(jam_mask)[0]
+                    hits = np.sum(abs_err[idx] <= change_tolerance)
+                    jam_event_count += idx.size
+                    jam_event_hits  += int(hits)
+                    cool[idx] = np.maximum(cool[idx], cooldown)
+
+                if rec_mask.any():
+                    idx = np.where(rec_mask)[0]
+                    hits = np.sum(abs_err[idx] <= change_tolerance)
+                    rec_event_count += idx.size
+                    rec_event_hits  += int(hits)
+                    cool[idx] = np.maximum(cool[idx], cooldown)
+
+            # ---- α-based congestion (GT vs Pred)
+            gt_mask, vhat_running = _detect_congestion_alpha_propagation_batch(
+                y_np, alpha=alpha, vhat=None, nbrs=nbrs
+            )
+            pr_mask, _ = _detect_congestion_alpha_propagation_batch(
+                y_pred_np, alpha=alpha, vhat=vhat_running, nbrs=nbrs
+            )
+
+            gt = gt_mask.reshape(-1)
+            pr = pr_mask.reshape(-1)
+
+            TP += int(np.sum(gt & pr))
+            TN += int(np.sum(~gt & ~pr))
+            FP += int(np.sum(~gt & pr))
+            FN += int(np.sum(gt & ~pr))
+            total_points   += gt.size
+            total_gt_cong  += int(np.sum(gt))
+            total_pred_cong+= int(np.sum(pr))
+
+        # ---- compose metrics
+        MAE = float(np.mean(mae)) if len(mae) > 0 else 0.0
+        RMSE = float(np.sqrt(np.mean(mse))) if len(mse) > 0 else 0.0
+        denom_sum_y = float(np.sum(sum_y))
+        WMAPE = float(np.sum(mae) / denom_sum_y) if denom_sum_y != 0 else 0.0
+        BIG_ERR_RATE = big_err_count / total_preds if total_preds > 0 else 0.0
+
+        SUDDEN_EVENT_RATE = ( (jam_event_hits + rec_event_hits) / (jam_event_count + rec_event_count)
+                              if (jam_event_count + rec_event_count) > 0 else 0.0 )
+        JAM_EVENT_RATE = (jam_event_hits / jam_event_count) if jam_event_count > 0 else 0.0
+        REC_EVENT_RATE = (rec_event_hits / rec_event_count) if rec_event_count > 0 else 0.0
+
+        precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+        recall    = TP / (TP + FN) if (TP + FN) > 0 else 0.0  # <-- CONGESTION_HIT_RATE (analogue to SCSR hit-rate)
+        f1        = 2*precision*recall/(precision+recall) if (precision+recall) > 0 else 0.0
+        iou       = TP / (TP + FP + FN) if (TP + FP + FN) > 0 else 0.0
+        accuracy  = (TP + TN) / total_points if total_points > 0 else 0.0
+        gt_cong_rate = total_gt_cong / total_points if total_points > 0 else 0.0
+
+        return (
+            # base
+            MAE, RMSE, WMAPE,
+            big_err_count, BIG_ERR_RATE,
+            # SCSR
+            jam_event_count, jam_event_hits, JAM_EVENT_RATE,
+            rec_event_count, rec_event_hits, REC_EVENT_RATE,
+            (jam_event_count + rec_event_count),
+            (jam_event_hits  + rec_event_hits),
+            SUDDEN_EVENT_RATE,
+            # α-based congestion
+            precision, recall, f1, iou, accuracy, gt_cong_rate,
+            total_points, total_gt_cong, total_pred_cong
+        )
+
+def _build_subgraph_neighbors(edge_index, cln_node_map, num_nodes_subset):
+    """
+    Build undirected neighbor lists for the subset defined by cln_node_map.
+    Returns: list of lists 'nbrs' where nbrs[i] = list of neighbor indices in [0, num_nodes_subset)
+    """
+    # map original node id -> local subset index
+    local_idx = {int(orig): i for i, orig in enumerate(cln_node_map.tolist() if hasattr(cln_node_map, 'tolist') else cln_node_map)}
+    nbrs = [[] for _ in range(num_nodes_subset)]
+
+    if isinstance(edge_index, torch.Tensor):
+        ei = edge_index.detach().cpu().numpy()
+    else:
+        ei = np.asarray(edge_index)
+    assert ei.shape[0] == 2, "edge_index must be shape [2, E]"
+
+    for u, w in ei.T:
+        if u in local_idx and w in local_idx:
+            iu = local_idx[u]; iw = local_idx[w]
+            if iu != iw:
+                nbrs[iu].append(iw)
+                nbrs[iw].append(iu)
+    return nbrs
+
+def _detect_congestion_alpha_propagation_batch(
+    v,                      # [T, N] numpy
+    alpha=0.5,
+    vhat=None,              # if None, compute from this batch
+    nbrs=None,              # list-of-lists neighbors per node (graph-aware). If None, fall back to corridor.
+):
+    """
+    Implements the paper's rule:
+      base: v[t,i] < alpha * vhat[i]
+      spatial: at time t, (at least two spatial neighbors are base-congested). If deg(i)==2, require both.
+      temporal: at time t, both t-1 and t+1 are base-congested for the same sensor.
+    Returns: (mask[T,N], vhat[N])
+    """
+    v = np.asarray(v, dtype=np.float32)
+    if v.ndim == 1:
+        v = v[:, None]
+    elif v.ndim > 2:
+        v = v.reshape(v.shape[0], -1)
+    T, N = v.shape
+
+    if vhat is None:
+        # per-sensor median over this batch
+        vhat = np.nanmedian(v, axis=0)
+
+    thr = alpha * vhat
+    thr_full = np.broadcast_to(thr[None, :], (T, N))
+
+    base = (v < thr_full)
+
+    # spatial continuity
+    spatial = np.zeros_like(base, dtype=bool)
+    if nbrs is not None:
+        # graph-aware
+        for i in range(N):
+            deg = len(nbrs[i])
+            if deg < 2:
+                continue
+            cong_count = np.sum(base[:, nbrs[i]], axis=1)  # [T]
+            if deg == 2:
+                spatial[:, i] = (cong_count == 2)
+            else:
+                spatial[:, i] = (cong_count >= 2)
+    else:
+        # corridor fallback: immediate left/right neighbors
+        if N >= 3:
+            left  = base[:, :-2]
+            right = base[:,  2:]
+            spatial[:, 1:-1] = left & right
+
+    # temporal continuity
+    temporal = np.zeros_like(base, dtype=bool)
+    if T >= 3:
+        temporal[1:-1, :] = base[:-2, :] & base[2:, :]
+
+    congested = base | spatial | temporal
+    return congested, vhat

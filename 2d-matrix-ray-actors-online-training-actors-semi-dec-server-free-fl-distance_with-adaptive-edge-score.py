@@ -76,11 +76,11 @@ def get_parameters():
     parser.add_argument('--cloudlet_num', type=int, default=7, help='the number of cloudlets for semi-dec training, default as 10')
     parser.add_argument('--cloudlet_location_data', type=str, default="experiment_1", help='Experiment name from cloudlet location json file')
     parser.add_argument('--enable_es', type=bool, default=False, help='Disable or enable early stopping')
-    parser.add_argument('--enable_seed', type=bool, default=False, help='Disable or enable fixed seed')
-    parser.add_argument('--end_of_initial_data_index', type=int, default=26481, help='End of initial data for training dataset (model will train using datapoints 0-end_of_initial_data_index from all sensors) (METR-LA: 16491) (PeMS-BAY: )')
-    parser.add_argument('--data_per_step', type=int, default=250, help='How much data will be taken from entire training dataset each "epoch" (each time model will be trained) DEFAULT: 250')
+    parser.add_argument('--enable_seed', type=bool, default=True, help='Disable or enable fixed seed')
+    parser.add_argument('--end_of_initial_data_index', type=int, default=6481, help='End of initial data for training dataset (model will train using datapoints 0-end_of_initial_data_index from all sensors) (METR-LA: 16491) (PeMS-BAY: )')
+    parser.add_argument('--data_per_step', type=int, default=100, help='How much data will be taken from entire training dataset each "epoch" (each time model will be trained) DEFAULT: 250')
     parser.add_argument('--adj_matrix_type', type=str, default="original", help="original | no_neighbours")
-    parser.add_argument('--final_epoch_for_initial_edge_score_calc', type=int, default=20, help="Define the last epoch where model will only calculate edge scores without removing the edges based on certain criteria")
+    parser.add_argument('--final_epoch_for_initial_edge_score_calc', type=int, default=3, help="Define the last epoch where model will only calculate edge scores without removing the edges based on certain criteria")
     args = parser.parse_args()
 
     # For stable experiment results
@@ -347,8 +347,8 @@ def cloudlet_train(args, cln_actors, cln_models, zscore, len_train, num_nodes, d
                 # TODO - once we remove cross cloudlet edges, how do we check criteria gain, since we lose node feature?
                 # TODO - Add when a ground truth data has a shift (downard or upper), then increase the number of neighbours (edge connections)
                 # TODO - when speed becomes flat, remove cross cloudlet edges by edge scores
-                # ray.get(cln_actor.remove_cross_cloudlet_edges_using_edge_score.remote(args.stblock_num, args.Ks, num_nodes, device, args.n_his, args.n_pred))
-                ray.get(cln_actor.remove_cross_cloudlet_edges_using_grouped_edge_score.remote(args.stblock_num, args.Ks, num_nodes, device, args.n_his, args.n_pred, args.batch_size))
+                ray.get(cln_actor.remove_cross_cloudlet_edges_using_edge_score.remote(args.stblock_num, args.Ks, num_nodes, device, args.n_his, args.n_pred, args.batch_size))
+                # ray.get(cln_actor.remove_cross_cloudlet_edges_using_grouped_edge_score.remote(args.stblock_num, args.Ks, num_nodes, device, args.n_his, args.n_pred, args.batch_size))
                 
         # Average models from neighbours and that's the new model for each cloudlet
         cln_done = []

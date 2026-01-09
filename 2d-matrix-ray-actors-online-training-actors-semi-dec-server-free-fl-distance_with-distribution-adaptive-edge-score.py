@@ -77,8 +77,8 @@ def get_parameters():
     parser.add_argument('--cloudlet_location_data', type=str, default="experiment_1", help='Experiment name from cloudlet location json file')
     parser.add_argument('--enable_es', type=bool, default=False, help='Disable or enable early stopping')
     parser.add_argument('--enable_seed', type=bool, default=False, help='Disable or enable fixed seed')
-    parser.add_argument('--end_of_initial_data_index', type=int, default=6481, help='End of initial data for training dataset (model will train using datapoints 0-end_of_initial_data_index from all sensors) (METR-LA: 16491) (PeMS-BAY: )')
-    parser.add_argument('--data_per_step', type=int, default=100, help='How much data will be taken from entire training dataset each "epoch" (each time model will be trained) DEFAULT: 250')
+    parser.add_argument('--end_of_initial_data_index', type=int, default=26481, help='End of initial data for training dataset (model will train using datapoints 0-end_of_initial_data_index from all sensors) (METR-LA: 16491) (PeMS-BAY: )')
+    parser.add_argument('--data_per_step', type=int, default=250, help='How much data will be taken from entire training dataset each "epoch" (each time model will be trained) DEFAULT: 250')
     parser.add_argument('--adj_matrix_type', type=str, default="original", help="original | no_neighbours")
     args = parser.parse_args()
 
@@ -92,7 +92,8 @@ def get_parameters():
         # Set available CUDA devices
         # This option is crucial for multiple GPUs
         # 'cuda' ≡ 'cuda:0'
-        device = torch.device('cuda:0')
+        # device = torch.device('cuda:0')
+        device = torch.device('cpu')
     else:
         device = torch.device('cpu')
 
@@ -150,6 +151,8 @@ def data_preparate(args, device):
     cln_edge_index_list = []
     cln_node_map_list = []
 
+    cross_cloudlet_nodes_list = []
+
     cross_cloudlet_edge_index_list = []
     # cross_cloudlet_edges_map_list = []
     cross_cloudlet_edge_mask_list = []
@@ -170,9 +173,23 @@ def data_preparate(args, device):
         cross_cloudlet_edge_index_list.append(cross_cloudlet_edge_index)
         cross_cloudlet_edge_mask_list.append(cross_cloudlet_edge_mask)
 
-        print(f"cln_edge_index.size(1): {cln_edge_index.size(1)}")
-        print(f"cross_cloudlet_edges.size(1): {cross_cloudlet_edge_index.size(1)}")
+        all_node_indices = torch.arange(cln_nodes_subgraph.size(0), device=cln_nodes_subgraph.device)
+        cross_cloudlet_node_indices = all_node_indices[~torch.isin(all_node_indices, cln_node_map)]
+        cross_cloudlet_nodes = cln_nodes_subgraph[cross_cloudlet_node_indices]
 
+        cross_cloudlet_nodes_list.append(cross_cloudlet_nodes)
+
+        # print(f"cross_cloudlet_nodes.size(0): {cross_cloudlet_nodes.size(0)}")
+        # print(f"cln_nodes.size(0): {len(cln_nodes)}")
+        # print(f"cln_nodes_subgraph.size(0): {cln_nodes_subgraph.size(0)}")
+        # print(f"cross_cloudlet_nodes: {cross_cloudlet_nodes}")
+        # print(f"cln_nodes: {cln_nodes}")
+        # print(f"cln_nodes_subgraph: {cln_nodes_subgraph}")
+
+        # print(f"cln_edge_index.size(1): {cln_edge_index.size(1)}")
+        # print(f"cross_cloudlet_edge_index.size(1): {cross_cloudlet_edge_index.size(1)}")
+
+        # print(f"cross_cloudlet_edge_mask.size(1): {cross_cloudlet_edge_mask.size(0)}")
         # print(f"cln_nodes_subgraph: {cln_nodes_subgraph}")
         # print(f"cln_edge_index: {cln_edge_index}")
         # print(f"cln_node_map: {cln_node_map}")
@@ -280,7 +297,7 @@ def prepare_model(args, blocks):
     es = earlystopping.EarlyStopping(mode='min', min_delta=0.0, patience=args.patience) # init early stopping object
 
     # RUN IN PyTorch Geometric!!!!!!!!
-    model = models.STGCNGraphConvPyG(args, blocks).to(device)
+    model = models.STGCNGraphConvPyG(args, blocks).to('cuda:0')
 
     # define optimization algorithm
     if args.opt == "rmsprop":
@@ -318,11 +335,28 @@ def cloudlet_train(args, cln_actors, cln_models, zscore, len_train, num_nodes, d
 
     for epoch in range(1, num_epochs + 1):
         for cln_actor in cln_actors:
-            ray.get(cln_actor.choose_cross_cloudlet_edges_by_distribution.remote(num_nodes))
+            ray.get(cln_actor.choose_cross_cloudlet_edges_by_distribution.remote(args.stblock_num, args.Ks, num_nodes, device, args.n_his, args.n_pred, args.batch_size))
         
         for i in range(args.cloudlet_num):
             cln_models[i] = cln_actors[i].online_train_no_master.remote(epoch, zscore, num_epochs)
-                
+        
+        cln_done = []
+        for cln_done_singal in cln_done:
+            ray.get(cln_done_singal)
+
+        # TODO Calcualte edge scores
+        cln_done = []
+        for cln_actor in cln_actors:
+            # masked_cross_cloudlet_edges = ray.get(cln_actor.choose_random_cross_cloudlet_edges_after_distribution_2.remote())
+            masked_cross_cloudlet_edges = ray.get(cln_actor.choose_random_cross_cloudlet_edges_after_distribution.remote())
+            # masked_cross_cloudlet_edges = ray.get(cln_actor.choose_random_cross_cloudlet_edges.remote())
+            # masked_cln_edge_index = ray.get(cln_actor.remove_edges.remote(masked_cross_cloudlet_edges))
+            masked_cln_edge_index = ray.get(cln_actor.remove_edges_distribution.remote(masked_cross_cloudlet_edges))
+            cln_done.append(cln_actor.delta_error_between_original_and_masked_for_online_training.remote(epoch, zscore, num_epochs, masked_cln_edge_index, masked_cross_cloudlet_edges))
+
+        for cln_done_singal in cln_done:
+            ray.get(cln_done_singal)
+
         # Average models from neighbours and that's the new model for each cloudlet
         cln_done = []
         for cln_actor in cln_actors:
@@ -330,6 +364,9 @@ def cloudlet_train(args, cln_actors, cln_models, zscore, len_train, num_nodes, d
 
         for cln_done_singal in cln_done:
             ray.get(cln_done_singal)
+
+    for i in range(args.cloudlet_num):
+        ray.get(cln_actors[i].log_edge_score_results.remote())
 
 if __name__ == "__main__":
     os.environ["RAY_DEDUP_LOGS"] = "0"
@@ -349,10 +386,13 @@ if __name__ == "__main__":
 
     num_nodes, cln_nodes_list, cln_adj_matrix, cln_train_list, cln_val_list, len_train, train_iters, x_trains, y_trains, val_iters, test_iters, cln_edge_index_list, cross_cloudlet_edge_index_list, cross_cloudlet_edge_mask_list, cln_node_map_list, master_zscore = data_preparate(args, device)
 
-    for i in range(len(cln_edge_index_list)):
-        cln_edge_index_list[i] = cln_edge_index_list[i].to(device)
-    for i in range(len(cln_node_map_list)):
-        cln_node_map_list[i] = cln_node_map_list[i].to(device)
+    original_cln_edge_index_list = cln_edge_index_list
+    for i in range(len(original_cln_edge_index_list)):
+        original_cln_edge_index_list[i] = original_cln_edge_index_list[i].to(device)
+    # for i in range(len(cln_edge_index_list)):
+    #     cln_edge_index_list[i] = cln_edge_index_list[i].to(device)
+    # for i in range(len(cln_node_map_list)):
+    #     cln_node_map_list[i] = cln_node_map_list[i].to(device)
     
     # Master model
     loss, es, model, optimizer, scheduler = prepare_model(args, blocks)
@@ -361,7 +401,7 @@ if __name__ == "__main__":
 
     cln_actors = []
     cln_id = 0
-    for cln_nodes, cln_model, cln_edge_index, cln_node_map, cln_train_iter, cln_x_train, cln_y_train, cln_val_iter, cln_test_iter, cln_train_dataset, cln_val_dataset, cross_cloudlet_edge_index, cross_cloudlet_edge_mask in zip(cln_nodes_list, cloudlet_models, cln_edge_index_list, cln_node_map_list, train_iters, x_trains, y_trains, val_iters, test_iters, cln_train_list, cln_val_list, cross_cloudlet_edge_index_list, cross_cloudlet_edge_mask_list):
+    for cln_nodes, cln_model, cln_edge_index, original_cln_edge_index, cln_node_map, cln_train_iter, cln_x_train, cln_y_train, cln_val_iter, cln_test_iter, cln_train_dataset, cln_val_dataset, cross_cloudlet_edge_index, cross_cloudlet_edge_mask in zip(cln_nodes_list, cloudlet_models, cln_edge_index_list, original_cln_edge_index_list, cln_node_map_list, train_iters, x_trains, y_trains, val_iters, test_iters, cln_train_list, cln_val_list, cross_cloudlet_edge_index_list, cross_cloudlet_edge_mask_list):
         cln_loss, cln_optimizer, cln_scheduler = setup_loss_optimizer_and_scheduler(cln_model)
         cln_actor = cloudlet_ray.Cloudlet.remote(model,
                                                  cln_model,
@@ -385,7 +425,8 @@ if __name__ == "__main__":
                                                  cross_cloudlet_edge_index=cross_cloudlet_edge_index,
                                                  cross_cloudlet_edge_mask=cross_cloudlet_edge_mask,
                                                  local_cln_nodes = cln_nodes,
-                                                 val_dataset = cln_val_dataset)
+                                                 val_dataset = cln_val_dataset,
+                                                 original_edge_index = original_cln_edge_index)
         ray.get(cln_actor.initialize_writer.remote())
         ray.get(cln_actor.init_loss_optimizer_scheduler.remote(args))
         cln_actors.append(cln_actor)

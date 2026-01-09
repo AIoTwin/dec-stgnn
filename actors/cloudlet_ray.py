@@ -14,10 +14,10 @@ from collections import deque, defaultdict
 from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.utils import k_hop_subgraph
 
-@ray.remote(num_gpus=0.14)
+@ray.remote(num_gpus=0.07)
 class Cloudlet(na.NetworkActor, cb.CloudletBase):
-    def __init__(self, server, model, loss, optimizer, scheduler, cln_id, edge_index, node_map, train_iter, val_iter, test_iter, cln_adj_matrix, logs_folder, train_dataset = [], x_train = [], y_train = [], val_dataset = [], end_of_initial_data_index = 0, data_per_step = 0, batch_size = 32, cross_cloudlet_edge_index = None, cross_cloudlet_edge_mask = None, local_cln_nodes = None):
-        super().__init__(server, model, loss, optimizer, scheduler, cln_id, edge_index, node_map, train_iter, x_train, y_train, val_iter, test_iter, logs_folder, end_of_initial_data_index, data_per_step, train_dataset, batch_size, cross_cloudlet_edge_index, cross_cloudlet_edge_mask, local_cln_nodes, val_dataset)
+    def __init__(self, server, model, loss, optimizer, scheduler, cln_id, edge_index, node_map, train_iter, val_iter, test_iter, cln_adj_matrix, logs_folder, train_dataset = [], x_train = [], y_train = [], val_dataset = [], end_of_initial_data_index = 0, data_per_step = 0, batch_size = 32, cross_cloudlet_edge_index = None, cross_cloudlet_edge_mask = None, local_cln_nodes = None, original_edge_index = None, cross_cloudlet_nodes = None):
+        super().__init__(server, model, loss, optimizer, scheduler, cln_id, edge_index, node_map, train_iter, x_train, y_train, val_iter, test_iter, logs_folder, end_of_initial_data_index, data_per_step, train_dataset, batch_size, cross_cloudlet_edge_index, cross_cloudlet_edge_mask, local_cln_nodes, val_dataset, original_edge_index, cross_cloudlet_nodes)
         super().init_wandb()
 
         # get cloudlet neighbour indices from cln_adj_matrix
@@ -38,6 +38,12 @@ class Cloudlet(na.NetworkActor, cb.CloudletBase):
 
         self.edge_scores = torch.zeros(cross_cloudlet_edge_index.shape[1], dtype=torch.float32)
         self.edge_counts = torch.zeros(cross_cloudlet_edge_index.shape[1], dtype=torch.int32)
+
+        self.node_scores = torch.zeros(cross_cloudlet_nodes.size(0), dtype=torch.float32)
+        self.node_counts = torch.zeros(cross_cloudlet_nodes.size(0), dtype=torch.int32)
+
+        # node_score_map = {int(node.item()): float(score.item()) for node, score in zip(self.cross_cloudlet_nodes, self.node_scores)}
+        # print(f"node_score_map: {node_score_map}")
 
     # Because of ray, you have to init SummaryWriter separately due to thread locking
     def initialize_writer(self):
@@ -75,7 +81,7 @@ class Cloudlet(na.NetworkActor, cb.CloudletBase):
         self.__train(epoch)
 
         return self.model
-
+    
     def online_train_no_master(self, epoch, zscore, num_epochs):
         self.__train_online(epoch, zscore, num_epochs)
 
@@ -193,11 +199,26 @@ class Cloudlet(na.NetworkActor, cb.CloudletBase):
         self.edge_scores[masked_cross_cloudlet_edges] += delta_err_clamped
         self.edge_counts[masked_cross_cloudlet_edges] += 1
 
+    def delta_error_between_original_and_masked_for_node_score_online_training(self, epoch, zscore, num_epochs, masked_edge_index, masked_cross_cloudlet_nodes, masked_val_iter, masked_cln_node_map):
+        d_err = super().delta_error_between_original_and_masked_for_online_training(epoch, zscore, num_epochs, masked_val_iter, masked_edge_index, masked_cln_node_map)
+
+        # Clamp delta_err to get values ONLY between -10 and 10
+        delta_err_clamped = torch.clamp(torch.tensor(d_err, device=self.node_scores.device), -10, 10)
+
+        self.node_scores[masked_cross_cloudlet_nodes] += delta_err_clamped
+        self.node_counts[masked_cross_cloudlet_nodes] += 1
+
     def log_edge_score_results(self):
         file_name = f"cloudlet_{self.cln_id}"  # Assuming you have a `self.index` for cloudlet ID
         edge_positions = torch.nonzero(self.cross_cloudlet_edge_mask).flatten().cpu().numpy()
         utility.save_edge_scores_logs(self.logs_folder, file_name, self.edge_scores, edge_positions)
         utility.save_edge_counts_logs(self.logs_folder, file_name, self.edge_counts, edge_positions)
+
+    def log_node_score_results(self):
+        file_name = f"cloudlet_{self.cln_id}"  # Assuming you have a `self.index` for cloudlet ID
+        node_positions = self.original_cross_cloudlet_nodes.cpu().numpy()
+        utility.save_node_scores_logs(self.logs_folder, file_name, self.node_scores, node_positions)
+        utility.save_node_counts_logs(self.logs_folder, file_name, self.node_counts, node_positions)
 
     def exploit_edge_scores(self, zscore):
         # Create a mask for non-zero edge_counts to avoid division by zero
@@ -235,7 +256,7 @@ class Cloudlet(na.NetworkActor, cb.CloudletBase):
         utility.save_val_metric_logs_edge_score(self.logs_folder, self.cln_id, "original", val_MAE, val_RMSE, val_WMAPE)
         return
     
-    def remove_cross_cloudlet_edges_using_edge_score(self, stblock_num, Ks, num_nodes, device, n_his, n_pred):
+    def remove_cross_cloudlet_edges_using_edge_score(self, stblock_num, Ks, num_nodes, device, n_his, n_pred, batch_size):
          # Create a mask for non-zero edge_counts to avoid division by zero
         non_zero_mask = self.edge_counts != 0
         edge_scores = torch.full_like(self.edge_scores, 0)
@@ -276,6 +297,13 @@ class Cloudlet(na.NetworkActor, cb.CloudletBase):
 
         self.x_train = x_train
         self.y_train = y_train
+
+        new_val_dataset = self.val_dataset[:, cln_nodes_subgraph.cpu().numpy()]
+        x_val, y_val = dataloader.data_transform(new_val_dataset, n_his, n_pred, device)
+        val_data = utils.data.TensorDataset(x_val, y_val)
+        val_iter = utils.data.DataLoader(dataset=val_data, batch_size=batch_size, shuffle=False)
+
+        self.val_iter = val_iter
 
     def remove_cross_cloudlet_edges_using_grouped_edge_score(self, stblock_num, Ks, num_nodes, device, n_his, n_pred, batch_size):
         # 1. Identify cross-cloudlet nodes (those NOT in local_cln_nodes)
@@ -361,3 +389,345 @@ class Cloudlet(na.NetworkActor, cb.CloudletBase):
         val_iter = utils.data.DataLoader(dataset=val_data, batch_size=batch_size, shuffle=False)
 
         self.val_iter = val_iter
+
+    def choose_cross_cloudlet_edges_by_distribution(self, stblock_num, Ks, num_nodes, device, n_his, n_pred, batch_size, percentage = 0.1):
+        if self.cross_cloudlet_edge_index.size(1) == 0:
+            return torch.empty((2, 0), dtype=torch.long, device=self.original_cross_cloudlet_edge_index.device)
+    
+        # 1. Identify cross-cloudlet nodes (those NOT in local_cln_nodes)
+        node_mask = torch.ones(num_nodes, dtype=torch.bool)
+        node_mask[self.local_cln_nodes] = False
+        cross_cln_nodes = torch.nonzero(node_mask).squeeze()
+
+        # 2. Create a mask for non-zero edge_counts to avoid division by zero
+        edge_scores = torch.zeros_like(self.edge_scores, dtype=torch.float)
+        non_zero_mask = self.edge_counts != 0
+        edge_scores[non_zero_mask] = self.edge_scores[non_zero_mask] # / self.edge_counts[non_zero_mask].float()
+
+         # 3. Initialize dictionaries to accumulate total score and count per cross-cloudlet node
+        node_score_sum = defaultdict(float)
+        node_score_count = defaultdict(int)
+
+        cross_edges = self.original_cross_cloudlet_edge_index  # shape [2, num_cross_edges]
+
+        for idx in range(cross_edges.shape[1]):
+            u, v = cross_edges[0, idx].item(), cross_edges[1, idx].item()
+            score = edge_scores[idx].item()
+            count = self.edge_counts[idx].item()
+
+            # If either u or v is a cross-cloudlet node, accumulate their score and count
+            if u in cross_cln_nodes:
+                node_score_sum[u] += score
+                node_score_count[u] += count
+            if v in cross_cln_nodes and v != u:
+                node_score_sum[v] += score
+                node_score_count[v] += count
+
+        # 4. Compute average score per cross-cloudlet node
+        node_avg_score = {}
+        total_score = 0.0
+        for node in node_score_sum:
+            if node_score_count[node] > 0:
+                avg = node_score_sum[node] / node_score_count[node]
+                node_avg_score[node] = avg
+                total_score += avg
+            else:
+                node_avg_score[node] = float('inf')  # Avoid division by zero
+
+        # === 5. Separate inf nodes from normal ones ===
+        inf_nodes = [n for n, s in node_avg_score.items() if s == float('inf')]
+        scored_nodes = {n: s for n, s in node_avg_score.items() if s != float('inf')}
+
+        # === 6. Create probability distribution from scored nodes ===
+        if total_score > 0:
+            node_probs = {n: s / total_score for n, s in scored_nodes.items()}
+        else:
+            node_probs = {}
+
+        # === 7. Sample N% of scored nodes ===
+        selected_nodes = set()
+        if node_probs:
+            num_to_select = max(1, int(percentage * len(scored_nodes)))  # ensure at least one
+            selected_nodes.update(random.choices(
+                list(node_probs.keys()),
+                weights=list(node_probs.values()),
+                k=num_to_select
+            ))
+
+        # Always include nodes with inf scores
+        # selected_nodes.update(inf_nodes)
+        if inf_nodes:
+            print(f"{self.cln_id}: There are still some inf_nodes left: {len(inf_nodes)}")
+            # num_inf_to_select = max(1, int(percentage * len(inf_nodes)))  # at least 1
+            # selected_inf_nodes = random.sample(inf_nodes, k=min(num_inf_to_select, len(inf_nodes)))
+            # selected_nodes.update(selected_inf_nodes)
+        print(f"{self.cln_id}: selected_nodes: {selected_nodes}")
+        # === 8. Select all edges where u or v in selected_nodes ===
+        # Create the mask for cross cloudlet edges (True means edge is selected for removal)
+        masked_cross_cloudlet_edges = torch.zeros(self.original_cross_cloudlet_edge_index.size(1), dtype=torch.bool, device=self.original_cross_cloudlet_edge_index.device)
+
+        for idx in range(cross_edges.shape[1]):
+            u, v = cross_edges[0, idx].item(), cross_edges[1, idx].item()
+            if u in selected_nodes or v in selected_nodes:
+                masked_cross_cloudlet_edges[idx] = True
+        # print(f"{self.cln_id}: masked_cross_cloudlet_edges.size(0): {masked_cross_cloudlet_edges.size(0)}")
+        # Create the final edge mask for all edges (including non-cross-cloudlet edges)
+        cloudlet_edge_mask = torch.ones(self.original_edge_index.shape[1], dtype=torch.bool)
+        cloudlet_edge_mask[self.original_cross_cloudlet_edge_mask] = ~masked_cross_cloudlet_edges
+
+        # Create the masked edge index
+        masked_cln_edge_index = self.original_edge_index[:, cloudlet_edge_mask]
+
+        # print(f"{self.cln_id}: cloudlet_edge_mask.size(0): {cloudlet_edge_mask.size(0)}")
+        # print(f"{self.cln_id}: masked_cln_edge_index.size(1): {masked_cln_edge_index.size(1)}")
+
+        cln_nodes_subgraph, cln_edge_index, cln_node_map, _ = k_hop_subgraph(self.local_cln_nodes, stblock_num * (Ks - 1), masked_cln_edge_index, relabel_nodes=True, num_nodes=num_nodes)
+        cln_edge_index = cln_edge_index.to(device=device)
+        cln_node_map = cln_node_map.to(device=device)
+
+        self.edge_index = cln_edge_index
+        self.node_map = cln_node_map
+        # print(f"{self.cln_id}: cln_edge_index.size(1): {cln_edge_index.size(1)}")
+
+        # Create new cross cloudlet edge index and mask
+        cln_nodes_tensor = torch.tensor(self.local_cln_nodes, device=masked_cln_edge_index.device)
+        src, dst = cln_edge_index
+        cross_cloudlet_edge_mask = ~(torch.isin(dst, cln_nodes_tensor) & torch.isin(src, cln_nodes_tensor))
+
+        cross_cloudlet_edge_index = cln_edge_index[:, cross_cloudlet_edge_mask]
+
+        self.cross_cloudlet_edge_index = cross_cloudlet_edge_index
+        self.cross_cloudlet_edge_mask = cross_cloudlet_edge_mask
+
+        # print(f"{self.cln_id}: cross_cloudlet_edge_index.size(1): {cross_cloudlet_edge_index.size(1)}")
+        # print(f"{self.cln_id}: cross_cloudlet_edge_mask.size(0): {cross_cloudlet_edge_mask.size(0)}")
+
+        # Create new train and val datasets
+        new_train_dataset = self.train_dataset[:, cln_nodes_subgraph.cpu().numpy()]
+
+        x_train, y_train = dataloader.data_transform(new_train_dataset, n_his, n_pred, device)
+
+        self.x_train = x_train
+        self.y_train = y_train
+
+        new_val_dataset = self.val_dataset[:, cln_nodes_subgraph.cpu().numpy()]
+        x_val, y_val = dataloader.data_transform(new_val_dataset, n_his, n_pred, device)
+        val_data = utils.data.TensorDataset(x_val, y_val)
+        val_iter = utils.data.DataLoader(dataset=val_data, batch_size=batch_size, shuffle=False)
+
+        self.val_iter = val_iter
+
+    def choose_cross_cloudlet_nodes_by_distribution(self, stblock_num, Ks, num_nodes, device, n_his, n_pred, batch_size, epoch, scaler, percentage = 0.1):
+        # If there are no cross cloudlet edges, return None
+        if self.cross_cloudlet_edge_index.size(1) == 0:
+            return None
+        
+        # Detect vehicle speed peaks for local nodes - if detected, don't remove it's neighbours (cross cloudlet nodes)
+        ineligible_nodes = self.simple_detect_vehicle_speed_peaks(epoch, scaler, self.original_y_train)
+        utility.save_ineligible_nodes_logs(self.logs_folder, self.cln_id, ineligible_nodes)
+
+        # === 1. Compute average scores per node (avoid division by zero) ===
+        avg_scores = torch.zeros_like(self.node_scores)
+        non_zero_mask = self.node_counts != 0
+        avg_scores[non_zero_mask] = self.node_scores[non_zero_mask] / self.node_counts[non_zero_mask].float()
+
+        # === 2. Create score map for valid (non-zero, non-NaN) nodes ===
+        valid_mask = non_zero_mask & ~torch.isnan(avg_scores) & (avg_scores > 0)
+        valid_nodes = self.original_cross_cloudlet_nodes[valid_mask]
+        valid_scores = avg_scores[valid_mask]
+
+        # === Filter out ineligible nodes ===
+        ineligible_tensor = torch.tensor(list(ineligible_nodes), device=valid_nodes.device)
+        eligible_mask = ~torch.isin(valid_nodes, ineligible_tensor)
+        valid_nodes = valid_nodes[eligible_mask]
+        valid_scores = valid_scores[eligible_mask]
+
+        if valid_nodes.numel() == 0:
+            print(f"{self.cln_id}: No valid scored nodes found.")
+            utility.save_nodes_removed_by_distribution_logs(self.logs_folder, self.cln_id, set())
+            return
+        else:
+            print(f"{self.cln_id} - valid_nodes: {valid_nodes}")
+        
+        # === 3. Normalize scores into a probability distribution ===
+        total_score = valid_scores.sum().item()
+        node_probs = valid_scores / total_score
+
+        # === 4. Sample N% of nodes based on distribution ===
+        target_count = int(percentage * self.original_cross_cloudlet_nodes.size(0))
+        num_to_select = max(1, min(target_count, valid_nodes.size(0)))  # Don't over-select
+        selected_indices = torch.multinomial(node_probs, num_samples=num_to_select, replacement=False)
+        selected_nodes = set(valid_nodes[selected_indices].tolist())
+        # num_to_select = max(1, int(percentage * valid_nodes.size(0)))
+        # selected_indices = torch.multinomial(node_probs, num_samples=num_to_select, replacement=False)
+        # selected_nodes = set(valid_nodes[selected_indices].tolist())
+        utility.save_nodes_removed_by_distribution_logs(self.logs_folder, self.cln_id, selected_nodes)
+        print(f"{self.cln_id}: Selected cross-cloudlet nodes for node removal: {selected_nodes}")
+
+        # === 5. Mask out cross-cloudlet edges connected to selected nodes ===
+        masked_cross_cloudlet_edges = torch.zeros(
+            self.original_cross_cloudlet_edge_index.size(1),
+            dtype=torch.bool,
+            device=self.original_cross_cloudlet_edge_index.device
+        )
+
+        src, dst = self.original_cross_cloudlet_edge_index
+        for idx in range(src.size(0)):
+            u, v = src[idx].item(), dst[idx].item()
+            if u in selected_nodes or v in selected_nodes:
+                masked_cross_cloudlet_edges[idx] = True
+
+        # === 6. Create new edge index by masking out selected edges ===
+        cloudlet_edge_mask = torch.ones(self.original_edge_index.size(1), dtype=torch.bool, device=self.original_edge_index.device)
+        cloudlet_edge_mask[self.original_cross_cloudlet_edge_mask] = ~masked_cross_cloudlet_edges
+        masked_cln_edge_index = self.original_edge_index[:, cloudlet_edge_mask]
+
+        cln_nodes_subgraph, cln_edge_index, cln_node_map, _ = k_hop_subgraph(
+            self.local_cln_nodes,
+            stblock_num * (Ks - 1),
+            masked_cln_edge_index,
+            relabel_nodes=True,
+            num_nodes=num_nodes
+        )
+        cln_edge_index = cln_edge_index.to(device=device)
+        cln_node_map = cln_node_map.to(device=device)
+
+        self.edge_index = cln_edge_index
+        self.node_map = cln_node_map
+
+        # Set new cross cloudlet nodes
+        all_node_indices = torch.arange(cln_nodes_subgraph.size(0), device=cln_nodes_subgraph.device)
+        cross_cloudlet_node_indices = all_node_indices[~torch.isin(all_node_indices, cln_node_map)]
+        self.cross_cloudlet_nodes = cln_nodes_subgraph[cross_cloudlet_node_indices]
+
+        # === 8. Recalculate cross-cloudlet edge index/mask ===
+        cln_nodes_tensor = torch.tensor(self.local_cln_nodes, device=device)
+        src, dst = cln_edge_index
+        cross_cloudlet_edge_mask = ~(torch.isin(dst, cln_nodes_tensor) & torch.isin(src, cln_nodes_tensor))
+        cross_cloudlet_edge_index = cln_edge_index[:, cross_cloudlet_edge_mask]
+
+        self.cross_cloudlet_edge_index = cross_cloudlet_edge_index
+        self.cross_cloudlet_edge_mask = cross_cloudlet_edge_mask
+
+        # === 9. Update train/val datasets ===
+        cln_nodes_subgraph_cpu = cln_nodes_subgraph.cpu().numpy()
+
+        new_train_dataset = self.train_dataset[:, cln_nodes_subgraph_cpu]
+        x_train, y_train = dataloader.data_transform(new_train_dataset, n_his, n_pred, device)
+        self.x_train = x_train
+        self.y_train = y_train
+
+        new_val_dataset = self.val_dataset[:, cln_nodes_subgraph_cpu]
+        x_val, y_val = dataloader.data_transform(new_val_dataset, n_his, n_pred, device)
+        val_data = utils.data.TensorDataset(x_val, y_val)
+        self.val_iter = utils.data.DataLoader(dataset=val_data, batch_size=batch_size, shuffle=False)
+
+    def choose_cross_cloudlet_nodes_by_distribution_with_adaptive_percentage(self, stblock_num, Ks, num_nodes, device, n_his, n_pred, batch_size, epoch, scaler, percentage = None):
+        # If there are no cross cloudlet edges, return None
+        if self.cross_cloudlet_edge_index.size(1) == 0:
+            return None
+        
+        # Detect vehicle speed peaks for local nodes - if detected, don't remove it's neighbours (cross cloudlet nodes)
+        ineligible_nodes = self.detect_vehicle_speed_peaks(epoch, scaler, self.original_y_train)
+        utility.save_ineligible_nodes_logs(self.logs_folder, self.cln_id, ineligible_nodes)
+
+        # === 1. Compute average scores per node (avoid division by zero) ===
+        avg_scores = torch.zeros_like(self.node_scores)
+        non_zero_mask = self.node_counts != 0
+        avg_scores[non_zero_mask] = self.node_scores[non_zero_mask] / self.node_counts[non_zero_mask].float()
+
+        # === 2. Create score map for valid (non-zero, non-NaN) nodes ===
+        valid_mask = non_zero_mask & ~torch.isnan(avg_scores) & (avg_scores > 0)
+        valid_nodes = self.original_cross_cloudlet_nodes[valid_mask]
+        valid_scores = avg_scores[valid_mask]
+
+        # === Filter out ineligible nodes ===
+        ineligible_tensor = torch.tensor(list(ineligible_nodes), device=valid_nodes.device)
+        eligible_mask = ~torch.isin(valid_nodes, ineligible_tensor)
+        valid_nodes = valid_nodes[eligible_mask]
+        valid_scores = valid_scores[eligible_mask]
+
+        if valid_nodes.numel() == 0:
+            print(f"{self.cln_id}: No valid scored nodes found.")
+            utility.save_nodes_removed_by_distribution_logs(self.logs_folder, self.cln_id, set())
+            return
+        # else:
+        #     print(f"{self.cln_id} - valid_nodes: {valid_nodes}")
+        
+        # === 3. Normalize scores into a probability distribution ===
+        total_score = valid_scores.sum().item()
+        node_probs = valid_scores / total_score
+
+        # === 4. Sample N% of nodes based on distribution ===
+        n_pool = int(self.original_cross_cloudlet_nodes.size(0))
+        if percentage is None:
+            perc = self.comm_ctrl.current_fraction(n_pool)   # <-- controller decides
+        else:
+            perc = percentage
+        target_count = int(perc * n_pool)
+        num_to_select = max(1, min(target_count, valid_nodes.size(0)))  # Don't over-select
+        selected_indices = torch.multinomial(node_probs, num_samples=num_to_select, replacement=False)
+        selected_nodes = set(valid_nodes[selected_indices].tolist())
+        # num_to_select = max(1, int(percentage * valid_nodes.size(0)))
+        # selected_indices = torch.multinomial(node_probs, num_samples=num_to_select, replacement=False)
+        # selected_nodes = set(valid_nodes[selected_indices].tolist())
+        utility.save_nodes_removed_by_distribution_logs(self.logs_folder, self.cln_id, selected_nodes)
+        print(f"{self.cln_id}: Removing ~{perc:.2f} of pool (n={n_pool}) → {len(selected_nodes)} nodes")
+
+        # === 5. Mask out cross-cloudlet edges connected to selected nodes ===
+        masked_cross_cloudlet_edges = torch.zeros(
+            self.original_cross_cloudlet_edge_index.size(1),
+            dtype=torch.bool,
+            device=self.original_cross_cloudlet_edge_index.device
+        )
+
+        src, dst = self.original_cross_cloudlet_edge_index
+        for idx in range(src.size(0)):
+            u, v = src[idx].item(), dst[idx].item()
+            if u in selected_nodes or v in selected_nodes:
+                masked_cross_cloudlet_edges[idx] = True
+
+        # === 6. Create new edge index by masking out selected edges ===
+        cloudlet_edge_mask = torch.ones(self.original_edge_index.size(1), dtype=torch.bool, device=self.original_edge_index.device)
+        cloudlet_edge_mask[self.original_cross_cloudlet_edge_mask] = ~masked_cross_cloudlet_edges
+        masked_cln_edge_index = self.original_edge_index[:, cloudlet_edge_mask]
+
+        cln_nodes_subgraph, cln_edge_index, cln_node_map, _ = k_hop_subgraph(
+            self.local_cln_nodes,
+            stblock_num * (Ks - 1),
+            masked_cln_edge_index,
+            relabel_nodes=True,
+            num_nodes=num_nodes
+        )
+        cln_edge_index = cln_edge_index.to(device=device)
+        cln_node_map = cln_node_map.to(device=device)
+
+        self.edge_index = cln_edge_index
+        self.node_map = cln_node_map
+
+        # Set new cross cloudlet nodes
+        all_node_indices = torch.arange(cln_nodes_subgraph.size(0), device=cln_nodes_subgraph.device)
+        cross_cloudlet_node_indices = all_node_indices[~torch.isin(all_node_indices, cln_node_map)]
+        self.cross_cloudlet_nodes = cln_nodes_subgraph[cross_cloudlet_node_indices]
+
+        # === 8. Recalculate cross-cloudlet edge index/mask ===
+        cln_nodes_tensor = torch.tensor(self.local_cln_nodes, device=device)
+        src, dst = cln_edge_index
+        cross_cloudlet_edge_mask = ~(torch.isin(dst, cln_nodes_tensor) & torch.isin(src, cln_nodes_tensor))
+        cross_cloudlet_edge_index = cln_edge_index[:, cross_cloudlet_edge_mask]
+
+        self.cross_cloudlet_edge_index = cross_cloudlet_edge_index
+        self.cross_cloudlet_edge_mask = cross_cloudlet_edge_mask
+
+        # === 9. Update train/val datasets ===
+        cln_nodes_subgraph_cpu = cln_nodes_subgraph.cpu().numpy()
+
+        new_train_dataset = self.train_dataset[:, cln_nodes_subgraph_cpu]
+        x_train, y_train = dataloader.data_transform(new_train_dataset, n_his, n_pred, device)
+        self.x_train = x_train
+        self.y_train = y_train
+
+        new_val_dataset = self.val_dataset[:, cln_nodes_subgraph_cpu]
+        x_val, y_val = dataloader.data_transform(new_val_dataset, n_his, n_pred, device)
+        val_data = utils.data.TensorDataset(x_val, y_val)
+        self.val_iter = utils.data.DataLoader(dataset=val_data, batch_size=batch_size, shuffle=False)

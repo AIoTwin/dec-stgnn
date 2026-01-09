@@ -63,6 +63,9 @@ def data_transform(data, n_his, n_pred, device):
     n_vertex = data.shape[1] # number of nodes (if default: 207)
     len_record = len(data) # if default: train - 23991, if val or test - 5140
     num = len_record - n_his - n_pred # number of sequences, if default (for training): 23991 - 12 - 3 = 23976
+
+    if num <= 0:
+        return None, None
     
     # Init a NumPy array with 0s, representing input data tensor with 4-dimensions
     # if default (for training): [23976 x 1 x 12 x 207] - is 1 number of node features(???)

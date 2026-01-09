@@ -47,7 +47,7 @@ def get_parameters():
     parser = argparse.ArgumentParser(description='STGCN') # create ArgumentParser object
     parser.add_argument('--enable_cuda', type=bool, default=True, help='enable CUDA, default as True')
     parser.add_argument('--seed', type=int, default=42, help='set the random seed for stabilizing experiment results')
-    parser.add_argument('--dataset', type=str, default='pems-bay', choices=['metr-la', 'pems-bay']) # selected dataset
+    parser.add_argument('--dataset', type=str, default='pemsd7-m', choices=['metr-la', 'pems-bay']) # selected dataset
     parser.add_argument('--n_his', type=int, default=12) # history window size
     parser.add_argument('--n_pred', type=int, default=12, help='the number of time interval for predcition, default as 3')
     parser.add_argument('--time_intvl', type=int, default=5) # never used???
@@ -67,7 +67,7 @@ def get_parameters():
     parser.add_argument('--step_size', type=int, default=5)
     parser.add_argument('--gamma', type=float, default=0.7)
     parser.add_argument('--patience', type=int, default=10, help='early stopping patience')
-    parser.add_argument('--cloudlet_num', type=int, default=7, help='the number of cloudlets for semi-dec training, default as 10')
+    parser.add_argument('--cloudlet_num', type=int, default=12, help='the number of cloudlets for semi-dec training, default as 10')
     parser.add_argument('--cloudlet_location_data', type=str, default="experiment_1", help='Experiment name from cloudlet location json file')
     parser.add_argument('--enable_es', type=bool, default=False, help='Disable or enable early stopping')
     parser.add_argument('--enable_seed', type=bool, default=False, help='Disable or enable fixed seed')
